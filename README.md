@@ -1,4 +1,4 @@
-# arc53-watcher-go
+# ARC 53 Watcher
 
 Blockchain watcher for arc53 metadata written in go
 
