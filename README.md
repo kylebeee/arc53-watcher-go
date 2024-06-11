@@ -13,8 +13,8 @@ You'll need go 1.22.1 installed on your local machine. See https://go.dev/ for i
 mysql -u username -p arc53 < ./db.sql
 ```
 - run the watcher to sync provider apps, track the chain & update / add new community pages automatically
-
-NOTE: the initial catchup for syncing all provider apps may take some time
+> [!NOTE]
+> the initial catchup for syncing all provider apps may take some time
 ```bash
 go run ./main/.
 ```
