@@ -12,8 +12,9 @@ You'll need go 1.22.1 installed on your local machine. See https://go.dev/ for i
 ```bash
 mysql -u username -p arc53 < ./db.sql
 ```
-- fetch all your provider contract IDs and insert them into the database ( you'll do this part yourself by selecting what providers you want to use, currently the `NFD` provider is the only one implemented )
-- when its caught up run the watcher to track the chain & update / add new community pages automatically with
+- run the watcher to sync provider apps, track the chain & update / add new community pages automatically
+- 
+NOTE: the initial catchup for syncing all provider apps may take some time
 ```bash
 go run ./main/.
 ```

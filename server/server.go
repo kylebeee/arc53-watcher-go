@@ -11,6 +11,7 @@ import (
 	"github.com/algorand/go-algorand-sdk/v2/client/v2/indexer"
 	"github.com/gin-gonic/gin"
 	"github.com/jmoiron/sqlx"
+	"github.com/kylebeee/arc53-watcher-go/db"
 	"github.com/kylebeee/arc53-watcher-go/errors"
 	streamer "github.com/kylebeee/arc53-watcher-go/internal/algod"
 	"github.com/kylebeee/arc53-watcher-go/internal/config"
@@ -27,35 +28,60 @@ type Arc53WatcherServer struct {
 	WatcherCancelFn    context.CancelFunc
 	ProcessingFailures []interface{}
 	PrintTxns          bool
-	Providers          []providers.Provider
+	ProviderTypes      []providers.ProviderType
 }
+
+const networkMainnet = "mainnet"
+const networkTestnet = "testnet"
+
+const indexerMainnetAPI = "https://mainnet-idx.algonode.cloud"
+const indexerTestnetAPI = "https://testnet-idx.algonode.cloud"
+
+const algodMainnetAPI = "https://mainnet-api.algonode.cloud"
+const algodTestnetAPI = "https://testnet-api.algonode.cloud"
 
 func New() *Arc53WatcherServer {
 	var err error
 
 	s := &Arc53WatcherServer{
-		Engine:    gin.Default(),
-		PrintTxns: true,
-		Providers: providers.Providers,
+		Engine:        gin.Default(),
+		PrintTxns:     true,
+		ProviderTypes: providers.ProviderTypes,
 	}
 
 	s.routes()
 
-	s.Indexer, err = indexer.MakeClient("https://mainnet-idx.algonode.cloud", "")
+	network := networkTestnet
+	indexerURL := indexerTestnetAPI
+	algodURL := algodTestnetAPI
+	if s.IsProduction() {
+		network = networkMainnet
+		indexerURL = indexerMainnetAPI
+		algodURL = algodMainnetAPI
+	}
+
+	s.Indexer, err = indexer.MakeClient(indexerURL, "")
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	s.Algod, err = algod.MakeClient("https://mainnet-api.algonode.cloud", "")
+	s.Algod, err = algod.MakeClient(algodURL, "")
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	for i := range s.Providers {
-		err = s.Providers[i].Init(s.DB, s.Algod)
+	for i := range s.ProviderTypes {
+		err = s.ProviderTypes[i].Init(network, s.DB, s.Algod)
 		if err != nil {
 			log.Fatalf("[!ERR][_MAIN] error initializing provider: %s\n", err)
 		}
+
+		startAtRound, err := db.GetLatestProviderRound(s.DB, s.ProviderTypes[i].Type())
+		if err != nil {
+			log.Fatalf("[!ERR][_MAIN] error fetching provider latest round: %s\n", err)
+		}
+
+		go s.ProviderTypes[i].CatchUp(s.DB, s.Algod, startAtRound, s.Indexer)
 	}
 
 	go func() {
@@ -66,7 +92,7 @@ func New() *Arc53WatcherServer {
 				Queue:  1,
 				ANodes: []*streamer.AlgoNodeConfig{
 					{
-						Address: "https://mainnet-api.algonode.cloud",
+						Address: algodURL,
 						Id:      "public-node",
 					},
 				},

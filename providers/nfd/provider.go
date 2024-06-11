@@ -2,14 +2,19 @@ package nfd
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/algorand/go-algorand-sdk/v2/client/v2/algod"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/common/models"
+	"github.com/algorand/go-algorand-sdk/v2/client/v2/indexer"
 	"github.com/algorand/go-algorand-sdk/v2/types"
 	"github.com/jmoiron/sqlx"
 	"github.com/kylebeee/arc53-watcher-go/db"
@@ -20,16 +25,23 @@ import (
 )
 
 const NFDMainNetRegistryAppID uint64 = 760937186
+const NFDTestNetRegistryAppID uint64 = 84366825
 
 type NFDProvider struct {
+	network string
 	DB      *sqlx.DB
 	Algod   *algod.Client
 	SyncMap *sync.Map
 }
 
-func (p *NFDProvider) Init(dbConn *sqlx.DB, algodClient *algod.Client) error {
+func (p *NFDProvider) Type() string {
+	return "nfd"
+}
+
+func (p *NFDProvider) Init(network string, dbConn *sqlx.DB, algodClient *algod.Client) error {
 	const op errors.Op = "NFDProvider.Init"
 
+	p.network = network
 	p.DB = dbConn
 	p.Algod = algodClient
 
@@ -46,7 +58,85 @@ func (p *NFDProvider) Init(dbConn *sqlx.DB, algodClient *algod.Client) error {
 	return nil
 }
 
-func (p *NFDProvider) Process(stxn types.SignedTxnInBlock, round uint64) error {
+func (p *NFDProvider) CatchUp(dbConn *sqlx.DB, algodClient *algod.Client, startingRound uint64, indexerClient *indexer.Client) error {
+	const op errors.Op = "NFDProvider.CatchUp"
+	var err error
+
+	// fetch all NFD accounts via walking registry app transactions
+	nextToken := ""
+	loop := true
+	transactions := []models.Transaction{}
+
+	registry := NFDMainNetRegistryAppID
+	if p.network != "mainnet" {
+		registry = NFDTestNetRegistryAppID
+	}
+
+	for loop {
+		loop = false
+		nextPage := nextToken
+		resp, err := indexerClient.SearchForTransactions().ApplicationId(registry).MinRound(startingRound).NextToken(nextPage).Do(context.Background())
+		if err != nil {
+			return errors.E(op, err)
+		}
+
+		transactions = append(transactions, resp.Transactions...)
+
+		if resp.NextToken != "" {
+			loop = true
+			nextToken = resp.NextToken
+		}
+	}
+
+	status, err := algodClient.Status().Do(context.Background())
+	if err != nil {
+		return errors.E(op, err)
+	}
+
+	syncQueue := []uint64{}
+
+	for _, transaction := range transactions {
+
+		fmt.Println("app call type: ", transaction.ApplicationTransaction.OnCompletion)
+
+		setupTx := transaction.ApplicationTransaction.OnCompletion == "optin" && len(transaction.ApplicationTransaction.ApplicationArgs) > 0 && string(transaction.ApplicationTransaction.ApplicationArgs[0]) == "assign"
+		hasData := len(transaction.LocalStateDelta) > 0 && len(transaction.LocalStateDelta[0].Delta) > 0
+
+		if setupTx && hasData {
+			Key, err := base64.StdEncoding.DecodeString(transaction.LocalStateDelta[0].Delta[0].Key)
+			if err != nil {
+				return errors.E(op, err)
+			}
+
+			if string(Key) != "i.appid" {
+				return errors.E(op, fmt.Errorf("wrong local storage key"))
+			}
+
+			encodedValue, err := base64.StdEncoding.DecodeString(transaction.LocalStateDelta[0].Delta[0].Value.Bytes)
+			if err != nil {
+				return errors.E(op, err)
+			}
+
+			appID := uint64(binary.BigEndian.Uint64(encodedValue))
+			fmt.Println(appID)
+
+			syncQueue = append(syncQueue, appID)
+		}
+	}
+
+	ticker := time.NewTicker(300 * time.Millisecond)
+	for _, appID := range misc.UniqueSlice(syncQueue) {
+		<-ticker.C
+		err = p.SyncNFDByAppID(appID, status.LastRound)
+		if err != nil {
+			return errors.E(op, err)
+		}
+	}
+
+	return nil
+}
+
+func (p *NFDProvider) ProcessBlock(stxn types.SignedTxnInBlock, round uint64) error {
 
 	txnsToProcess := append([]types.SignedTxnWithAD{stxn.SignedTxnWithAD}, misc.ListInner(&stxn.SignedTxnWithAD)...)
 
@@ -82,6 +172,23 @@ func (p *NFDProvider) Process(stxn types.SignedTxnInBlock, round uint64) error {
 				return err
 			}
 		}
+	}
+
+	return nil
+}
+
+func (p *NFDProvider) Process(appID uint64) error {
+	const op errors.Op = "NFDProvider.Process"
+
+	// get current block
+	status, err := p.Algod.Status().Do(context.Background())
+	if err != nil {
+		return errors.E(op, err)
+	}
+
+	err = p.SyncNFDByAppID(appID, status.LastRound)
+	if err != nil {
+		return errors.E(op, err)
 	}
 
 	return nil
@@ -137,6 +244,12 @@ func (p *NFDProvider) SyncNFDByAppID(appID uint64, currentBlock uint64) error {
 			for _, address := range *preexistingAddresses {
 				addresses[address.Address] = address
 			}
+		}
+	} else {
+		_, err = db.Insert(tx, &db.Provider{ID: appID, Type: "nfd"})
+		if err != nil {
+			tx.Rollback()
+			return errors.E(op, err)
 		}
 	}
 

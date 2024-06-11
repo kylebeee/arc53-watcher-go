@@ -33,8 +33,8 @@ func (s *Arc53WatcherServer) ProcessBlock(b *algod.BlockWrap) {
 			}
 		}
 
-		for i := range s.Providers {
-			err := s.Providers[i].Process(stxn, uint64(b.Block.Round))
+		for i := range s.ProviderTypes {
+			err := s.ProviderTypes[i].ProcessBlock(stxn, uint64(b.Block.Round))
 			if err != nil {
 				fmt.Println(err)
 			}

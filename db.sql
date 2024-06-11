@@ -1,8 +1,10 @@
 CREATE TABLE "provider" (
   "id" bigint unsigned NOT NULL,
   "type" enum('nfd') NOT NULL,
+  "round" bigint unigned NOT NULL,
   PRIMARY KEY ("id"),
-  INDEX "type" ("type")
+  INDEX "type" ("type"),
+  INDEX "round" ("round")
 );
 
 CREATE TABLE "provider_address" (

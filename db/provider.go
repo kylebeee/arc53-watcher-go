@@ -9,12 +9,13 @@ import (
 )
 
 type Provider struct {
-	ID   uint64 `structs:"id,omitempty" db:"id" json:"id,omitempty"`
-	Type string `structs:"type,omitempty" db:"type" json:"type,omitempty"`
+	ID    uint64 `structs:"id,omitempty" db:"id" json:"id,omitempty"`
+	Type  string `structs:"type,omitempty" db:"type" json:"type,omitempty"`
+	Round uint64 `structs:"round,omitempty" db:"round" json:"round,omitempty"`
 }
 
 func ProviderTableKeys() []string {
-	return []string{"id", "type"}
+	return []string{"id", "type", "round"}
 }
 
 func GetProvider[H Handle](h H, id uint64) (*Provider, error) {
@@ -51,4 +52,20 @@ func GetAllProvidersByType[H Handle](h H, t string) (*[]Provider, error) {
 	}
 
 	return &list, nil
+}
+
+func GetLatestProviderRound[H Handle](h H, t string) (uint64, error) {
+	const op errors.Op = "GetLatestProviderRound"
+	query := fmt.Sprintf("select coalesce(max(round),0) from %s.provider where type = ?", arc53Database())
+	var round uint64
+
+	err := h.Get(&round, query, t)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return 0, errors.E(pkg, op, errors.DatabaseResultNotFound, err, "providers not found")
+		}
+		return 0, errors.E(pkg, op, err)
+	}
+
+	return round, nil
 }
