@@ -14,6 +14,7 @@ type ProviderType interface {
 	CatchUp(*sqlx.DB, *algod.Client, uint64, *indexer.Client) error
 	ProcessBlock(stxn types.SignedTxnInBlock, round uint64) error
 	Process(uint64) error
+	IsProviderApp(uint64) bool
 }
 
 var ProviderTypes = []ProviderType{

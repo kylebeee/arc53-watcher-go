@@ -67,9 +67,9 @@ func (p *NFDProvider) CatchUp(dbConn *sqlx.DB, algodClient *algod.Client, starti
 	loop := true
 	transactions := []models.Transaction{}
 
-	registry := NFDMainNetRegistryAppID
-	if p.network != "mainnet" {
-		registry = NFDTestNetRegistryAppID
+	registry := NFDTestNetRegistryAppID
+	if p.network == "mainnet" {
+		registry = NFDMainNetRegistryAppID
 	}
 
 	for loop {
@@ -137,6 +137,7 @@ func (p *NFDProvider) CatchUp(dbConn *sqlx.DB, algodClient *algod.Client, starti
 }
 
 func (p *NFDProvider) ProcessBlock(stxn types.SignedTxnInBlock, round uint64) error {
+	const op errors.Op = "NFDProvider.ProcessBlock"
 
 	txnsToProcess := append([]types.SignedTxnWithAD{stxn.SignedTxnWithAD}, misc.ListInner(&stxn.SignedTxnWithAD)...)
 
@@ -149,7 +150,7 @@ func (p *NFDProvider) ProcessBlock(stxn types.SignedTxnInBlock, round uint64) er
 			// update on existing NFD
 			err := p.SyncNFDByAppID(uint64(txn.ApplicationFields.ApplicationID), round)
 			if err != nil {
-				return err
+				return errors.E(op, err)
 			}
 			return nil
 		}
@@ -167,7 +168,13 @@ func (p *NFDProvider) ProcessBlock(stxn types.SignedTxnInBlock, round uint64) er
 
 			// new NFD
 			p.SyncMap.Store(appID, struct{}{})
-			err := p.SyncNFDByAppID(appID, round)
+
+			_, err := db.Insert(p.DB, &db.Provider{ID: appID, Type: "nfd"})
+			if err != nil {
+				return errors.E(op, err)
+			}
+
+			err = p.SyncNFDByAppID(appID, round)
 			if err != nil {
 				return err
 			}
@@ -179,6 +186,16 @@ func (p *NFDProvider) ProcessBlock(stxn types.SignedTxnInBlock, round uint64) er
 
 func (p *NFDProvider) Process(appID uint64) error {
 	const op errors.Op = "NFDProvider.Process"
+	var err error
+
+	if !p.IsProviderApp(appID) {
+		return errors.E(op, fmt.Errorf("appID is not an NFD"))
+	}
+
+	_, err = db.Insert(p.DB, &db.Provider{ID: appID, Type: "nfd"})
+	if err != nil {
+		return errors.E(op, err)
+	}
 
 	// get current block
 	status, err := p.Algod.Status().Do(context.Background())
@@ -192,6 +209,21 @@ func (p *NFDProvider) Process(appID uint64) error {
 	}
 
 	return nil
+}
+
+func (p *NFDProvider) IsProviderApp(appID uint64) bool {
+	_, exists := p.SyncMap.Load(appID)
+	if exists {
+		return true
+	}
+
+	// check if its an NFD
+	resp, err := http.Get(fmt.Sprintf("https://api.nf.domains/nfd/%v?view=tiny&poll=false&nocache=false", appID))
+	if err != nil {
+		return false
+	}
+
+	return resp.StatusCode == 200
 }
 
 // helpers
@@ -244,12 +276,6 @@ func (p *NFDProvider) SyncNFDByAppID(appID uint64, currentBlock uint64) error {
 			for _, address := range *preexistingAddresses {
 				addresses[address.Address] = address
 			}
-		}
-	} else {
-		_, err = db.Insert(tx, &db.Provider{ID: appID, Type: "nfd"})
-		if err != nil {
-			tx.Rollback()
-			return errors.E(op, err)
 		}
 	}
 
