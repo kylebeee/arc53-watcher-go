@@ -1,7 +1,7 @@
 CREATE TABLE "provider" (
   "id" bigint unsigned NOT NULL,
   "type" enum('nfd') NOT NULL,
-  "round" bigint unigned NOT NULL,
+  "round" bigint unsigned NOT NULL,
   PRIMARY KEY ("id"),
   INDEX "type" ("type"),
   INDEX "round" ("round")
@@ -16,6 +16,13 @@ CREATE TABLE "provider_address" (
 CREATE TABLE "community" (
   "id" bigint unsigned NOT NULL,
   "version" varchar(6) NOT NULL,
+  PRIMARY KEY ("id")
+);
+
+CREATE TABLE "community_json" (
+  "id" bigint unsigned NOT NULL,
+  "data" json NOT NULL,
+  "malformed" tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY ("id")
 );
 

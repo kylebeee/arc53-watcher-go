@@ -45,11 +45,11 @@ var allCollectionGetExcludes = []CollectionGetExclude{
 	CollectionGetExcludeExtras,
 }
 
-func GetCollectionsByNFDID[H db.Handle](h H, nfdID uint64, exclude ...CollectionGetExclude) (*[]Collection, error) {
-	const op errors.Op = "GetCollectionsByNFDID"
+func GetCollectionsByProviderID[H db.Handle](h H, providerID uint64, exclude ...CollectionGetExclude) (*[]Collection, error) {
+	const op errors.Op = "GetCollectionsByProviderID"
 
 	var collections []Collection
-	cols, err := db.GetCollectionsByProviderID(h, nfdID)
+	cols, err := db.GetCollectionsByProviderID(h, providerID)
 	if err != nil {
 		return nil, errors.E(op, err)
 	}

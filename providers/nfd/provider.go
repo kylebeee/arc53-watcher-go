@@ -2,11 +2,9 @@ package nfd
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -44,10 +42,15 @@ func (p *NFDProvider) Init(network string, dbConn *sqlx.DB, algodClient *algod.C
 	p.network = network
 	p.DB = dbConn
 	p.Algod = algodClient
+	p.SyncMap = &sync.Map{}
 
 	appIDs, err := db.GetAllProvidersByType(p.DB, "nfd")
 	if err != nil {
-		return errors.E(op, err)
+		if !db.ErrNoRows(err) {
+			return errors.E(op, err)
+		} else {
+			return nil
+		}
 	}
 
 	for i := range *appIDs {
@@ -82,11 +85,15 @@ func (p *NFDProvider) CatchUp(dbConn *sqlx.DB, algodClient *algod.Client, starti
 
 		transactions = append(transactions, resp.Transactions...)
 
+		fmt.Printf("\r[GATHERING REGISTRY TXNS]: %v", len(transactions))
+
 		if resp.NextToken != "" {
 			loop = true
 			nextToken = resp.NextToken
 		}
 	}
+
+	fmt.Println()
 
 	status, err := algodClient.Status().Do(context.Background())
 	if err != nil {
@@ -97,41 +104,32 @@ func (p *NFDProvider) CatchUp(dbConn *sqlx.DB, algodClient *algod.Client, starti
 
 	for _, transaction := range transactions {
 
-		fmt.Println("app call type: ", transaction.ApplicationTransaction.OnCompletion)
+		if len(transaction.ApplicationTransaction.ApplicationArgs) > 0 {
+			arg := string(transaction.ApplicationTransaction.ApplicationArgs[0])
 
-		setupTx := transaction.ApplicationTransaction.OnCompletion == "optin" && len(transaction.ApplicationTransaction.ApplicationArgs) > 0 && string(transaction.ApplicationTransaction.ApplicationArgs[0]) == "assign"
-		hasData := len(transaction.LocalStateDelta) > 0 && len(transaction.LocalStateDelta[0].Delta) > 0
-
-		if setupTx && hasData {
-			Key, err := base64.StdEncoding.DecodeString(transaction.LocalStateDelta[0].Delta[0].Key)
-			if err != nil {
-				return errors.E(op, err)
+			if arg == "mint" && len(transaction.InnerTxns) > 1 && transaction.InnerTxns[1].ApplicationTransaction.ApplicationId != 0 {
+				syncQueue = append(syncQueue, transaction.InnerTxns[1].ApplicationTransaction.ApplicationId)
+				fmt.Printf("\r[SYNC QUEUE]: %v", len(syncQueue))
 			}
-
-			if string(Key) != "i.appid" {
-				return errors.E(op, fmt.Errorf("wrong local storage key"))
-			}
-
-			encodedValue, err := base64.StdEncoding.DecodeString(transaction.LocalStateDelta[0].Delta[0].Value.Bytes)
-			if err != nil {
-				return errors.E(op, err)
-			}
-
-			appID := uint64(binary.BigEndian.Uint64(encodedValue))
-			fmt.Println(appID)
-
-			syncQueue = append(syncQueue, appID)
 		}
 	}
+
+	fmt.Println()
 
 	ticker := time.NewTicker(300 * time.Millisecond)
+	syncCount := 0
 	for _, appID := range misc.UniqueSlice(syncQueue) {
 		<-ticker.C
+		fmt.Printf("\r[SYNCING NFD]: %v [COUNT]: %v", appID, syncCount)
 		err = p.SyncNFDByAppID(appID, status.LastRound)
 		if err != nil {
+			fmt.Println("[CATCHUP] [NFD] [ERROR]: ", err)
 			return errors.E(op, err)
 		}
+		syncCount++
 	}
+
+	fmt.Println()
 
 	return nil
 }
@@ -159,17 +157,16 @@ func (p *NFDProvider) ProcessBlock(stxn types.SignedTxnInBlock, round uint64) er
 		if isMint {
 
 			var appID uint64
-			for _, innerTxn := range stxn.EvalDelta.InnerTxns {
-				if innerTxn.Txn.Type == types.ApplicationCallTx {
-					appID = uint64(innerTxn.Txn.ApplicationID)
-					break
-				}
+
+			if len(stxn.EvalDelta.InnerTxns) > 1 {
+				appID = uint64(stxn.EvalDelta.InnerTxns[1].Txn.ApplicationID)
+				break
 			}
 
 			// new NFD
 			p.SyncMap.Store(appID, struct{}{})
 
-			_, err := db.Insert(p.DB, &db.Provider{ID: appID, Type: "nfd"})
+			_, err := db.Insert(p.DB, &db.Provider{ID: appID, Type: "nfd", Round: round})
 			if err != nil {
 				return errors.E(op, err)
 			}
@@ -192,13 +189,13 @@ func (p *NFDProvider) Process(appID uint64) error {
 		return errors.E(op, fmt.Errorf("appID is not an NFD"))
 	}
 
-	_, err = db.Insert(p.DB, &db.Provider{ID: appID, Type: "nfd"})
+	// get current block
+	status, err := p.Algod.Status().Do(context.Background())
 	if err != nil {
 		return errors.E(op, err)
 	}
 
-	// get current block
-	status, err := p.Algod.Status().Do(context.Background())
+	_, err = db.Insert(p.DB, &db.Provider{ID: appID, Type: "nfd", Round: status.LastRound})
 	if err != nil {
 		return errors.E(op, err)
 	}
@@ -232,8 +229,6 @@ func (p *NFDProvider) SyncNFDByAppID(appID uint64, currentBlock uint64) error {
 	var new bool = false
 	var communitySet bool = false
 
-	fmt.Println("Syncing NFD: ", appID)
-
 	_, err := db.GetProvider(p.DB, appID)
 	if err != nil && !db.ErrNoRows(err) {
 		return errors.E(op, err)
@@ -241,14 +236,10 @@ func (p *NFDProvider) SyncNFDByAppID(appID uint64, currentBlock uint64) error {
 		new = true
 	}
 
-	fmt.Println("Getting NFD data")
-
 	nfdProperties, err := GetNFDData(p.Algod, context.Background(), appID)
 	if err != nil {
 		return errors.E(op, err)
 	}
-
-	fmt.Println(nfdProperties)
 
 	tx, err := p.DB.Beginx()
 	if err != nil {
@@ -339,14 +330,13 @@ func (p *NFDProvider) SyncNFDByAppID(appID uint64, currentBlock uint64) error {
 
 	// insert or update db with NFD data
 	if new {
-		_, err = db.Insert(tx, &db.Provider{ID: appID, Type: "nfd"})
+		_, err = db.Insert(tx, &db.Provider{ID: appID, Type: "nfd", Round: currentBlock})
 		if err != nil {
 			tx.Rollback()
 			return errors.E(op, err)
 		}
 	}
 
-	fmt.Printf("Committing changes for %v\n", appID)
 	err = tx.Commit()
 	if err != nil {
 		tx.Rollback()
@@ -362,7 +352,8 @@ func (p *NFDProvider) processCommunity(tx *sqlx.Tx, nfdID uint64, data []byte) e
 	if strings.HasPrefix(string(data), "ipfs://") {
 		ipfsdata, err := GetIPFSData(string(data))
 		if err != nil {
-			return errors.E(op, err)
+			fmt.Println(err)
+			return nil
 		}
 		data = ipfsdata
 	}
@@ -533,7 +524,7 @@ func (p *NFDProvider) processCollections(tx *sqlx.Tx, nfdID uint64, collectionsD
 	const op errors.Op = "ProcessCollections"
 
 	collectionKeys := map[string]compound.Collection{}
-	collections, err := compound.GetCollectionsByNFDID(p.DB, nfdID)
+	collections, err := compound.GetCollectionsByProviderID(p.DB, nfdID)
 	if err != nil {
 		if err.(*errors.Error).Kind != errors.DatabaseResultNotFound {
 			return errors.E(op, err)
@@ -722,7 +713,7 @@ func (p *NFDProvider) processCollections(tx *sqlx.Tx, nfdID uint64, collectionsD
 							}
 						}
 
-						fmt.Println("propValueExtrasKeys: ", propValueExtrasKeys)
+						// fmt.Println("propValueExtrasKeys: ", propValueExtrasKeys)
 
 						// update or insert properties values extras
 						dniPropertiesValuesExtras := []string{}
@@ -783,7 +774,7 @@ func (p *NFDProvider) processCollections(tx *sqlx.Tx, nfdID uint64, collectionsD
 						}
 
 						for extraKey, extraValue := range value.Extras {
-							fmt.Println("inserting extra: ", prop.ID, " - ", extraKey, " - ", extraValue)
+							// fmt.Println("inserting extra: ", prop.ID, " - ", extraKey, " - ", extraValue)
 
 							extra := &db.PropertyValueExtras{
 								ID:    prop.ID,
@@ -1034,7 +1025,7 @@ func GetIPFSData(url string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, errors.E(op, err)
 	}

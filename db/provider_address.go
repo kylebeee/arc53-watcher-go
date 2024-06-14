@@ -127,12 +127,12 @@ func DeleteProviderAddressesByIDAndAddress[H DBStruct](h H, id uint64, address s
 	return nil
 }
 
-// DeleteProviderAddressNotIn deletes collections that are not included in a list for a given NFD
+// DeleteProviderAddressNotIn deletes collections that are not included in a list for a given provider ID
 func DeleteProviderAddressNotIn[H Handle](h H, id uint64, addresses ...string) error {
 	const op errors.Op = "DeleteProviderAddressNotIn"
 	var err error
 	data := append([]interface{}{id}, misc.ToInterfaceSlice(addresses)...)
-	fmt.Println(data)
+	// fmt.Println(data)
 	query := fmt.Sprintf("delete from %s.provider_address where id = ?", arc53Database())
 
 	if len(addresses) > 0 {

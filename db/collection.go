@@ -67,7 +67,7 @@ func GetCollectionsByProviderID[H Handle](h H, providerID uint64) (*[]Collection
 
 func GetCollectionCreatorWallets[H Handle](h H, id string) (*[]ProviderAddress, error) {
 	const op errors.Op = "GetCollectionCreatorWallets"
-	query := fmt.Sprintf("select %s from %s.nfd_wallet where id = (select nfd_id from %s.collection where id = ?) and verified = 1 order by deposit desc", strings.Join(ProviderAddressTableKeys(), ","), arc53Database(), arc53Database())
+	query := fmt.Sprintf("select %s from %s.provider_address where id = (select provider_id from %s.collection where id = ?) and verified = 1 order by deposit desc", strings.Join(ProviderAddressTableKeys(), ","), arc53Database(), arc53Database())
 
 	var wallets []ProviderAddress
 	err := h.Select(&wallets, query, id)
@@ -114,9 +114,9 @@ func GetCollectionsPaginated[H Handle](h H, start, limit uint64) (*[]Collection,
 	return &collections, nil
 }
 
-func DeleteCollectionsByNFDID[H Handle](h H, nfdID uint64) error {
-	const op errors.Op = "DeleteCollectionsByNFDID"
-	query := fmt.Sprintf("delete from %s.collection where nfd_id = ?", arc53Database())
+func DeleteCollectionsByProviderID[H Handle](h H, providerID uint64) error {
+	const op errors.Op = "DeleteCollectionsByProviderID"
+	query := fmt.Sprintf("delete from %s.collection where provider_id = ?", arc53Database())
 
 	switch h := any(h).(type) {
 	case *sqlx.Tx:
@@ -125,12 +125,12 @@ func DeleteCollectionsByNFDID[H Handle](h H, nfdID uint64) error {
 			return errors.E(pkg, op, errors.Database, err, "Failed to Prepare Query")
 		}
 
-		_, err = stmt.Exec(nfdID)
+		_, err = stmt.Exec(providerID)
 		if err != nil {
 			return errors.E(pkg, op, errors.Database, err, "Failed to Execute Query")
 		}
 	case *sqlx.DB:
-		_, err := h.Exec(query, nfdID)
+		_, err := h.Exec(query, providerID)
 		if err != nil {
 			return errors.E(pkg, op, errors.Database, err, "Failed to Execute Query")
 		}
@@ -139,12 +139,12 @@ func DeleteCollectionsByNFDID[H Handle](h H, nfdID uint64) error {
 	return nil
 }
 
-// DeleteCollectionNotIn deletes collections that are not included in a list for a given NFD
-func DeleteCollectionNotIn[H Handle](h H, nfdID uint64, ids ...string) error {
+// DeleteCollectionNotIn deletes collections that are not included in a list for a given provider ID
+func DeleteCollectionNotIn[H Handle](h H, providerID uint64, ids ...string) error {
 	const op errors.Op = "DeleteCollectionNotIn"
 	var err error
-	data := append([]interface{}{nfdID}, misc.ToInterfaceSlice(ids)...)
-	query := fmt.Sprintf("delete from %s.collection where nfd_id = ?", arc53Database())
+	data := append([]interface{}{providerID}, misc.ToInterfaceSlice(ids)...)
+	query := fmt.Sprintf("delete from %s.collection where provider_id = ?", arc53Database())
 
 	if len(ids) > 0 {
 		qMarks := []rune(strings.Repeat("?, ", len(ids)))

@@ -60,6 +60,12 @@ func New() *Arc53WatcherServer {
 		algodURL = algodMainnetAPI
 	}
 
+	conn, err := db.Connect()
+	if err != nil {
+		log.Fatalln(err)
+	}
+	s.DB = conn
+
 	s.Indexer, err = indexer.MakeClient(indexerURL, "")
 	if err != nil {
 		log.Fatalln(err)
@@ -70,6 +76,7 @@ func New() *Arc53WatcherServer {
 		log.Fatalln(err)
 	}
 
+	var currentAsOfRound int64
 	for i := range s.ProviderTypes {
 		err = s.ProviderTypes[i].Init(network, s.DB, s.Algod)
 		if err != nil {
@@ -81,13 +88,20 @@ func New() *Arc53WatcherServer {
 			log.Fatalf("[!ERR][_MAIN] error fetching provider latest round: %s\n", err)
 		}
 
-		go s.ProviderTypes[i].CatchUp(s.DB, s.Algod, startAtRound, s.Indexer)
+		err = s.ProviderTypes[i].CatchUp(s.DB, s.Algod, startAtRound, s.Indexer)
+		if err != nil {
+			log.Fatalf("[!ERR][_MAIN] error catching up provider: %s\n", err)
+		}
+
+		if int64(startAtRound) < currentAsOfRound || currentAsOfRound == 0 {
+			currentAsOfRound = int64(startAtRound)
+		}
 	}
 
 	go func() {
 		watchingConfig := config.StreamerConfig{
 			Algod: &streamer.AlgoConfig{
-				FRound: -1,
+				FRound: currentAsOfRound,
 				LRound: -1,
 				Queue:  1,
 				ANodes: []*streamer.AlgoNodeConfig{

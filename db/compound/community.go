@@ -31,7 +31,7 @@ const (
 )
 
 func GetCommunity[H db.Handle](h H, providerID uint64, exclude ...CommunityGetExclude) (*Community, error) {
-	const op errors.Op = "GetCommunitiesByNFDID"
+	const op errors.Op = "GetCommunity"
 	var community Community
 	buffer := (7 - len(exclude))
 	rChan := make(chan interface{}, buffer)
@@ -84,7 +84,7 @@ func GetCommunity[H db.Handle](h H, providerID uint64, exclude ...CommunityGetEx
 
 	if !misc.InSlice(CommunityGetExcludeCollections, exclude) {
 		go func() {
-			collections, err := GetCollectionsByNFDID(h, providerID)
+			collections, err := GetCollectionsByProviderID(h, providerID)
 			if err != nil && !db.ErrNoRows(err) {
 				rChan <- err
 				return
@@ -248,7 +248,7 @@ func DeleteCommunity[H db.Handle](h H, providerID uint64) error {
 		}
 	}
 
-	err = db.DeleteCollectionsByNFDID(h, providerID)
+	err = db.DeleteCollectionsByProviderID(h, providerID)
 	if err != nil {
 		return errors.E(op, err)
 	}

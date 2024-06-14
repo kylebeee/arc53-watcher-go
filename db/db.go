@@ -2,11 +2,13 @@ package db
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/fatih/structs"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 	"github.com/kylebeee/arc53-watcher-go/errors"
 )
@@ -27,6 +29,23 @@ const (
 	TKSSmall TableKeySlice = "small"
 	TKSFull  TableKeySlice = "full"
 )
+
+// Connect connects to a mysql database
+func Connect() (*sqlx.DB, error) {
+	const op errors.Op = "Connect"
+
+	credentials, err := base64.StdEncoding.DecodeString(os.Getenv("DB_AUTH"))
+	if err != nil {
+		return nil, errors.E(pkg, op, errors.Database, err)
+	}
+
+	db, err := sqlx.Open("mysql", string(credentials))
+	if err != nil {
+		return nil, errors.E(pkg, op, errors.Database, err)
+	}
+	db.SetMaxOpenConns(10)
+	return db, nil
+}
 
 type Handle interface {
 	*sqlx.DB | *sqlx.Tx

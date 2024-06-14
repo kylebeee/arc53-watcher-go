@@ -31,5 +31,5 @@ func main() {
 		s.WatcherCancelFn()
 	}()
 
-	s.Run(":5000")
+	s.Run(":3000")
 }

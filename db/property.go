@@ -93,7 +93,7 @@ func DeleteCollectionProperties[H Handle](h H, collectionID string) error {
 	return nil
 }
 
-// DeletePropertyNotIn deletes properties that are not included in a list for a given NFD
+// DeletePropertyNotIn deletes properties that are not included in a list for a given provider ID
 func DeletePropertyNotIn[H Handle](h H, collectionID string, ids ...string) error {
 	const op errors.Op = "DeletePropertyNotIn"
 	var err error

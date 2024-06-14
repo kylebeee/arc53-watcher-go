@@ -19,7 +19,7 @@ func ProviderTableKeys() []string {
 }
 
 func GetProvider[H Handle](h H, id uint64) (*Provider, error) {
-	const op errors.Op = "GetAllProvidersByType"
+	const op errors.Op = "GetProvider"
 	query := fmt.Sprintf("select %s from %s.provider where id = ?", strings.Join(ProviderTableKeys(), ","), arc53Database())
 	var provider Provider
 
