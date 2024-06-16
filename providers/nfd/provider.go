@@ -369,7 +369,7 @@ func (p *NFDProvider) processCommunity(tx *sqlx.Tx, nfdID uint64, data []byte) e
 	} else if db.ErrNoRows(err) {
 		_, err = db.Insert(tx, commJson)
 		if err != nil {
-			return errors.E(op, err)
+			return nil
 		}
 	} else {
 		if prevJson.Data == string(data) {
