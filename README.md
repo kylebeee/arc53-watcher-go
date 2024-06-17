@@ -62,7 +62,3 @@ type ProviderType interface {
 `Process(uint64) error` is for one off app updates & allow us to process / update ARC53 data through mechanisms like direct rest api calls
 
 `IsProviderApp(uint64) bool` discerns whether a provided app ID is of a given type
-
-
-
-``
