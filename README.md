@@ -21,9 +21,9 @@ For Linux & MacOS this typically looks like
 ```bash
  export ENV=production
 ```
-- create a databases `arc53` and dump the db.sql file into it
+- create databases `arc53` & `arc53_test` and dump the db.sql file into them
 ```bash
-mysql -u username -p arc53 < ./db.sql
+mysql -u username -p arc53 < ./db.sql && mysql -u username -p arc53_test < ./db.sql
 ```
 
 ## Running the server
